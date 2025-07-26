@@ -1,36 +1,75 @@
-/***************************************************************************//**
+/******************************************************************************
 *  \file       driver.c
 *
-*  \details    Simple kernel module
+*  \details    Automatically Creating a Device file
 *
-*  \author     phamtoan
+*  \author     PhamToan
 *
-* *******************************************************************************/
-#include<linux/kernel.h>
-#include<linux/init.h>
-#include<linux/module.h>
+*******************************************************************************/
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kdev_t.h>
+#include <linux/fs.h>
+#include <linux/err.h>
+#include <linux/device.h>
  
+dev_t dev = 0;
+static struct class *dev_class;
+
+
 /*
-** Module Init function
+** Module init function
 */
 static int __init kernel_module_extend_init(void)
 {
-    printk(KERN_INFO "Kernel Module Inserted Successfully...\n");
-    return 0;
-}
+        /*Allocating Major number*/
+        if((alloc_chrdev_region(&dev, 0, 1, "etx_dev")) <0){
+                pr_err("Cannot allocate major number for device\n");
+                return -1;
+        }
+        pr_info("Major = %d Minor = %d \n",MAJOR(dev), MINOR(dev));
+ 
+        /*Creating struct class*/
+        dev_class = class_create(THIS_MODULE,"etx_class");
+        if(IS_ERR(dev_class)){
+            pr_err("Cannot create the struct class for device\n");
+            goto r_class;
+        }
+ 
+        /*Creating device*/
+        if(IS_ERR(device_create(dev_class,NULL,dev,NULL,"etx_device"))){
+            pr_err("Cannot create the Device\n");
+            goto r_device;
+        }
+        pr_info("Kernel Module Inserted Successfully...\n");
+        return 0;
+ 
+r_device:
+        class_destroy(dev_class);
 
+r_class:
+        unregister_chrdev_region(dev,1);
+        return -1;
+}
+ 
 /*
-** Module Exit function
+** Module exit function
 */
 static void __exit kernel_module_extend_exit(void)
 {
-    printk(KERN_INFO "Kernel Module Removed Successfully...\n");
+        device_destroy(dev_class,dev);
+        class_destroy(dev_class);
+        unregister_chrdev_region(dev, 1);
+        pr_info("Kernel Module Removed Successfully...\n");
 }
  
 module_init(kernel_module_extend_init);
 module_exit(kernel_module_extend_exit);
  
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("PhamToan");
-MODULE_DESCRIPTION("A simple kernel module");
-MODULE_VERSION("1:1.0");
+MODULE_AUTHOR("Pham Xuan Toan");
+MODULE_DESCRIPTION("Automatically Creating a Device file");
+MODULE_VERSION("1.2");
+
+
