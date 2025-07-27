@@ -1,7 +1,7 @@
 /******************************************************************************
 *  \file       driver.c
 *
-*  \details    Creating Kernel Module with File Operations
+*  \details    Creating Kernel Module with IOCTL
 *
 *  \author     PhamToan
 *
@@ -20,7 +20,16 @@
 
 #include <linux/err.h>
 
+#include <linux/ioctl.h> /*for ioctls*/
+
 #define mem_size 1024
+
+typedef struct
+{
+	uint8_t value;
+	int8_t buffer[20];
+} ioctl_args;
+ioctl_args kernel_ioctl_args;
 
 /*create device file*/ 
 dev_t dev = 0;
@@ -30,11 +39,17 @@ static struct cdev etx_cdev;
 /*pointer buffer data*/
 uint8_t *kernel_buffer;
 
+/*create ioctl command in the driver*/
+#define MAGIC_NUMBER 'k'
+#define WRITE_STRUCT _IOW(MAGIC_NUMBER,0,ioctl_args*)
+#define READ_STRUCT _IOR(MAGIC_NUMBER,1,ioctl_args*)
+
 /*function prototypes of file operations*/
 static int      etx_open(struct inode *inode, struct file *file);
 static int      etx_release(struct inode *inode, struct file *file);
 static ssize_t  etx_read(struct file *filp, char __user *buf, size_t len,loff_t * off);
 static ssize_t  etx_write(struct file *filp, const char *buf, size_t len, loff_t * off);
+static long etx_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 /*create file operation structure*/
 static struct file_operations fops = 
@@ -44,6 +59,7 @@ static struct file_operations fops =
 	.write		= etx_write,
 	.open		= etx_open,
 	.release	= etx_release,
+	.unlocked_ioctl = etx_ioctl,
 };
 
 /*
@@ -113,6 +129,41 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
         {
             return -EFAULT;
         }
+}
+
+/*
+**This is function will be called when we send command by using systemcall ioctl()
+*/
+static long etx_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    	switch (cmd)
+    	{
+        	case WRITE_STRUCT:
+        	{
+            		if (copy_from_user(&kernel_ioctl_args, (ioctl_args __user *)arg, sizeof(kernel_ioctl_args)))/*copy to kernel*/
+            		{
+                		// Handle error
+                		return -EFAULT;
+            		}
+            		pr_info("Data is setted!\n");
+            		pr_info("Value : %d\n",kernel_ioctl_args.value);
+            		pr_info("Buffer : %s\n",kernel_ioctl_args.buffer);
+            		pr_info("----------------------------------------\n");
+            		break;
+        	}
+        	case READ_STRUCT:
+        	{
+            		if (copy_to_user((ioctl_args __user *)arg,&kernel_ioctl_args, sizeof(kernel_ioctl_args)))/*copy to user*/
+            		{
+                		return -EFAULT; // Indicate a bad address
+            		}
+            		pr_info("Data is read.\n");
+            		break;
+        	}
+        	default:
+            		return -ENOTTY; // Inappropriate ioctl for device
+    	}
+    	return 0;
 }
 
 
@@ -186,7 +237,7 @@ module_exit(kernel_module_extend_exit);
  
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pham Xuan Toan");
-MODULE_DESCRIPTION("Kernel Module with File Operations");
+MODULE_DESCRIPTION("Kernel Module with IOCTL");
 MODULE_VERSION("1.2");
 
 
