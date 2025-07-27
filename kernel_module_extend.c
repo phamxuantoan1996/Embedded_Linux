@@ -15,12 +15,20 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 
+#include <linux/slab.h> /*kmalloc and kfree*/
+#include <linux/uaccess.h> /*copy_to/from_user*/
+
 #include <linux/err.h>
+
+#define mem_size 1024
 
 /*create device file*/ 
 dev_t dev = 0;
 static struct class *dev_class;
 static struct cdev etx_cdev;
+
+/*pointer buffer data*/
+uint8_t *kernel_buffer;
 
 /*function prototypes of file operations*/
 static int      etx_open(struct inode *inode, struct file *file);
@@ -59,16 +67,52 @@ static int etx_release(struct inode *inode, struct file *file)
 */
 static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
 {
-        pr_info("Driver Read Function Called...!!!\n");
-        return 0;
+        size_t ret;
+	size_t byte_to_copy;
+	//
+    	size_t len_data_kernel_buffer = strlen(kernel_buffer) + 1;
+    	if (*off >= len_data_kernel_buffer)
+    	{
+        	return 0; //end of file
+    	}
+    	byte_to_copy = len;
+    	if(byte_to_copy > len_data_kernel_buffer)
+    	{
+        	byte_to_copy = len_data_kernel_buffer;
+    	}
+
+    	//Copy the data from the kernel space to the user-space
+    	ret = copy_to_user(buf, kernel_buffer + *off, byte_to_copy);
+
+    	if(ret == 0)
+    	{
+        	*off += byte_to_copy;
+        	// pr_info("Number of byte is read : %ld.\n",byte_to_copy);
+        	return byte_to_copy;
+    	}
+    	else
+    	{
+        	// pr_info("Fail to copy %ld bytes to user space.\n",ret);
+        	return -EFAULT;
+    	}
 }
 /*
 ** This function will be called when we write the Device file
 */
 static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
 {
-        pr_info("Driver Write Function Called...!!!\n");
-        return len;
+        //Copy the data to kernel space from the user-space
+        uint32_t numOfByte = 0;
+        numOfByte = copy_from_user(kernel_buffer, buf, len);
+        if(numOfByte == 0)
+        {
+            pr_info("Data : %s",(char*)kernel_buffer);
+            return len;
+        }
+        else
+        {
+            return -EFAULT;
+        }
 }
 
 
@@ -105,6 +149,14 @@ static int __init kernel_module_extend_init(void)
             pr_err("Cannot create the Device.\n");
             goto r_device;
         }
+
+	/*create buffer data kernel*/
+	if((kernel_buffer = kmalloc(mem_size,GFP_KERNEL)) == 0)
+	{
+		pr_err("Cannot allocate memory in kernel.\n");
+		goto r_device;
+	}
+
         pr_info("Kernel Module Inserted Successfully...\n");
         return 0;
  
@@ -121,6 +173,7 @@ r_class:
 */
 static void __exit kernel_module_extend_exit(void)
 {
+	kfree(kernel_buffer);
         device_destroy(dev_class,dev);
         class_destroy(dev_class);
 	cdev_del(&etx_cdev);
