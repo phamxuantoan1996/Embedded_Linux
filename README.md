@@ -1,84 +1,53 @@
-IOCTL
+1) Introduce
 
-There are many ways to communicate between the User space and Kernel space, 
-they are:
+One the root, there is a folder titled "proc". This folder is a mount point 
+for the procfs (Process Filesystem) which is a filesystem in a memory.
 
-+ IOCTL
-+ Procfs
-+ Sysfs
-+ Configfs
-+ Debugfs
-+ Sysctl
-+ UDB Sockets
-+ Netlink Sockets
+Many processes store information about themselves on this virtual filesystem. 
+ProcFS also stores other system information.
 
-1) IOCTL
+Procfs can act as a bridge connecting the user space and the kernel space. 
+User space can use proc files to read the information exported by the 
+kernel. Every entry in the proc file system provides some infomation from 
+kernel.
 
-IOCTL is referred to as Input and Output Control, which is used to talk to 
-device driver. This system call is available in most driver categories. 
-
-The major use of this is in case of handling some specific operations of a 
-device for which the kernel does not have a system call by default.
-
-2) Step Involved in IOCTL
+The proc file system is also very useful when we want to debug a kernel 
+module. While debugging we might want to know the values of various 
+variable in the module or maybe the data that the module is handling. 
 
 
-+ Create IOCTL command in the driver
-+ Write the IOCTL function in the driver
-+ Create IOCTL command in a Userspace application
-+ Use the IOCTL system call in a Userspace
+The proc entry can also be used to pass data to the kernel by writing into 
+the kernel, so there can be kinds of proc entries :
+- An entry that only reads only data from the kernel space.
+- An entry that reads as well as writes data into and from kernel space.
 
-2.1) Create IOCTL command in the driver
+2) Creating procfs directory
 
-- Define the IOCTL command:
+You can create the directory under /proc using below API:
 
-#define "ioctl_name" __IOX("magic_number","command_number","argument_type");
+struct proc_dir_entry *proc_mkdir(const char *name, struct proc_dir_entry 
+*parent)
 
-where:
+where :
 
-IOX can be : IO,IOW,IOR,IOWR
+name : The name of the directory that will be created under /proc
+parent : 
 
-magic_number : is a unique number or character that will differntiate our set 
-of ioctl calls from the other ioctl calls. Some times the major number for 
-the device is used here.
+3) Creating procfs entry
 
-command_number : is the number that is assigned to the ioctl. This is used 
-to differentiate the commands from one another.
+include header file proc_fs.h 
 
-- Include header file linux/ioctl
+struct proc_dir_entry *proc_create ( const char *name, umode_t mode
+, struct proc_dir_entry *parent, const struct file_operations *proc_fops )
 
+3) Procfs file
 
-2.2) Write IOCTL Function in the Driver
+We need to create file_operations structure proc_fops in which we can map 
+the read and write functions for the proc entry.
 
-- We need to add the ioctl function to our driver. 
-
-Declare prototype of ioctl function:
-
-int  ioctl(struct inode *inode,struct file *file,unsigned int cmd,unsigned long arg)
-
-- Define ioctl function
-
-
-- Add ioctl to driver
-static struct file_operations fops = 
-{
-	.owner		= THIS_MODULE
-	.............................
-	.............................
-	.unlocked_ioctl	= etx_ioctl,
-}
-
-2.3) Create IOCTL Command in a User space Applicaton
-
-Just define the ioctl command like how we define it in the driver.
-
-2.4) Use IOCTL System Call in User space.
-
-- Include header file sys/ioctl.h
-
-- call ioctl system call
-
-Syntax:
-	long ioctl("file descriptor","ioctl_command","argument");
-
-Example
+static struct file_operations proc_fops = {
+    .open = open_proc,
+    .read = read_proc,
+    .write = write_proc,
+    .release = release_proc
+};
