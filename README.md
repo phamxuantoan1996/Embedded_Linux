@@ -40,7 +40,7 @@ include header file proc_fs.h
 struct proc_dir_entry *proc_create ( const char *name, umode_t mode
 , struct proc_dir_entry *parent, const struct file_operations *proc_fops )
 
-3) Procfs file
+4) Procfs file
 
 We need to create file_operations structure proc_fops in which we can map 
 the read and write functions for the proc entry.

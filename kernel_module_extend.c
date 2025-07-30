@@ -1,7 +1,7 @@
 /******************************************************************************
 *  \file       driver.c
 *
-*  \details    Creating Kernel Module with IOCTL
+*  \details    Creating Kernel Module with Procfs
 *
 *  \author     PhamToan
 *
@@ -22,7 +22,11 @@
 
 #include <linux/ioctl.h> /*for ioctls*/
 
+#include <linux/proc_fs.h>
+
 #define mem_size 1024
+
+#define LINUX_KERNEL_VERSION 419
 
 typedef struct
 {
@@ -31,10 +35,15 @@ typedef struct
 } ioctl_args;
 ioctl_args kernel_ioctl_args;
 
+bool proc_read_var = false;
+
 /*create device file*/ 
 dev_t dev = 0;
 static struct class *dev_class;
 static struct cdev etx_cdev;
+
+/*creat struct procfs*/
+static struct proc_dir_entry *parent;
 
 /*pointer buffer data*/
 uint8_t *kernel_buffer;
@@ -51,6 +60,12 @@ static ssize_t  etx_read(struct file *filp, char __user *buf, size_t len,loff_t 
 static ssize_t  etx_write(struct file *filp, const char *buf, size_t len, loff_t * off);
 static long etx_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
+/*procfs functions*/
+static int      open_proc(struct inode *inode, struct file *file);
+static int      release_proc(struct inode *inode, struct file *file);
+static ssize_t  read_proc(struct file *filp, char __user *buffer, size_t length,loff_t * offset);
+static ssize_t  write_proc(struct file *filp, const char *buff, size_t len, loff_t * off);
+
 /*create file operation structure*/
 static struct file_operations fops = 
 {
@@ -62,6 +77,23 @@ static struct file_operations fops =
 	.unlocked_ioctl = etx_ioctl,
 };
 
+#if (LINUX_KERNEL_VERSION > 505)
+static struct proc_ops proc_fops = {
+	.proc_open = open_proc,
+	.proc_read = read_proc,
+	.proc_write = write_proc,
+	.proc_release = release_proc,
+};
+#else
+static struct file_operations proc_fops = {
+	.open = open_proc,
+	.read = read_proc,
+	.write = write_proc,
+	.release = release_proc,
+};
+#endif
+
+/*--------------------File Operations----------------------*/
 /*
 ** This function will be called when we open the Device file
 */
@@ -166,6 +198,58 @@ static long etx_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     	return 0;
 }
 
+/*------------------------Procfs File-----------------------*/
+/*
+** This function will be called when we open the procfs file
+*/
+static int open_proc(struct inode *inode, struct file *file)
+{
+    pr_info("proc file opend.....\t");
+    return 0;
+}
+/*
+** This function will be called when we close the procfs file
+*/
+static int release_proc(struct inode *inode, struct file *file)
+{
+    pr_info("proc file released.....\n");
+    return 0;
+}
+/*
+** This function will be called when we read the procfs file
+*/
+static ssize_t read_proc(struct file *filp, char __user *buffer, size_t length,loff_t * offset)
+{
+   	pr_info("proc file read.....\n");
+	if(!proc_read_var)
+	{
+		proc_read_var = true;
+	}
+	else
+	{
+		proc_read_var = false;
+		return 0;
+	}
+	if(copy_to_user(buffer,kernel_buffer,strlen(kernel_buffer)))
+    	{
+        	pr_err("Data Send : Err!\n");
+    	}
+    	return strlen(kernel_buffer);
+}
+
+/*
+** This function will be called when we write the procfs file
+*/
+static ssize_t write_proc(struct file *filp, const char *buff, size_t len, loff_t * off)
+{
+    pr_info("proc file wrote.....\n");
+    /*if( copy_from_user(etx_array,buff,len) )
+    {
+        pr_err("Data Write : Err!\n");
+    }
+    return len;*/
+	return 0;
+}
 
 /*
 ** Module init function
@@ -201,12 +285,24 @@ static int __init kernel_module_extend_init(void)
             goto r_device;
         }
 
+	/*Create proc directory. It will create a directory under "/proc" */
+        parent = proc_mkdir("etx",NULL);
+        if( parent == NULL )
+        {
+            pr_info("Error creating proc entry");
+            goto r_device;
+        }
+        /*Creating Proc entry under "/proc/etx/" */
+        proc_create("etx_proc", 0666, parent, &proc_fops);
+
+
 	/*create buffer data kernel*/
 	if((kernel_buffer = kmalloc(mem_size,GFP_KERNEL)) == 0)
 	{
 		pr_err("Cannot allocate memory in kernel.\n");
 		goto r_device;
 	}
+
 
         pr_info("Kernel Module Inserted Successfully...\n");
         return 0;
@@ -224,6 +320,8 @@ r_class:
 */
 static void __exit kernel_module_extend_exit(void)
 {
+	/* remove complete /proc/etx */
+        proc_remove(parent);
 	kfree(kernel_buffer);
         device_destroy(dev_class,dev);
         class_destroy(dev_class);
@@ -237,7 +335,7 @@ module_exit(kernel_module_extend_exit);
  
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pham Xuan Toan");
-MODULE_DESCRIPTION("Kernel Module with IOCTL");
+MODULE_DESCRIPTION("Kernel Module with Procfs");
 MODULE_VERSION("1.2");
 
 
