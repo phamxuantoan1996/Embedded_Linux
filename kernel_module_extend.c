@@ -17,6 +17,15 @@
 
 #include <linux/err.h>
 
+#include <linux/wait.h> //waitqueue
+#include <linux/kthread.h>
+
+uint32_t read_count = 0;
+static struct task_struct *wait_thread;
+
+wait_queue_head_t wait_queue_etx;
+int wait_queue_flag = 0;
+
 /*create device file*/ 
 dev_t dev = 0;
 static struct class *dev_class;
@@ -37,6 +46,29 @@ static struct file_operations fops =
 	.open		= etx_open,
 	.release	= etx_release,
 };
+
+
+/*
+** Thread function
+*/
+static int  wait_function(void *unused)
+{
+	while(1)
+	{
+		pr_info("Waiting for Event...\n");
+		wait_event_interruptible(wait_queue_etx,wait_queue_flag != 0);
+		if(wait_queue_flag == 2)
+		{
+			pr_info("Event came from Exit function\n");
+			return 0;
+		}
+		pr_info("Event came from Read Funtion - %d\n",read_count);
+		read_count++;
+		wait_queue_flag = 0;
+	}
+	return 0;
+}
+
 
 /*
 ** This function will be called when we open the Device file
@@ -60,6 +92,8 @@ static int etx_release(struct inode *inode, struct file *file)
 static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
 {
         pr_info("Driver Read Function Called...!!!\n");
+	wait_queue_flag = 1;
+	wake_up_interruptible(&wait_queue_etx);
         return 0;
 }
 /*
@@ -105,6 +139,24 @@ static int __init kernel_module_extend_init(void)
             pr_err("Cannot create the Device.\n");
             goto r_device;
         }
+
+
+	//initialize waitqueue
+	init_waitqueue_head(&wait_queue_etx);
+
+	//creat the kernel thread with name 'mythread'
+	wait_thread = kthread_create(wait_function,NULL,"WaitThread");
+	if(wait_thread)
+	{
+		pr_info("Thread created successfully\n");
+		wake_up_process(wait_thread);
+	}
+	else
+	{
+		pr_info("Thread creation failed\n");
+	}
+
+
         pr_info("Kernel Module Inserted Successfully...\n");
         return 0;
  
@@ -121,6 +173,10 @@ r_class:
 */
 static void __exit kernel_module_extend_exit(void)
 {
+	//wake up thread
+	wait_queue_flag = 2;
+	wake_up_interruptible(&wait_queue_etx);
+
         device_destroy(dev_class,dev);
         class_destroy(dev_class);
 	cdev_del(&etx_cdev);
