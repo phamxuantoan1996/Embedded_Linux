@@ -84,3 +84,59 @@ amount of work to perform.
 
 6) Process Context and Interrupt Context
  
+
+Kernel code that services system calls issued by user applications runs on behalf
+of the corresponding application processes and is said to excute in the process 
+context. 
+
+Interrupt handler, on the other hand, run asynchronously in the interrupt context. 
+
+Process context are not tied to any interrupt context and vice versa.
+
+Kernel code running in process context is preemptible. An interrupt context, 
+however, always runs to completion and is not preemptible. Because of this, there are 
+retrictions on what can be done from an interrupt context. Code executing from 
+interrupt context cannot do the following:
+
++ Go to sleep or relinquish the processor.
++ Acquire a mutex
++ Perform time-consuming task
++ Access user space virtual memory
+
+If we tak more time to process in a Interrupt Handler, this will happen:
++ While the highest priority is running, it doesn't let other interrupts to run.
++ Interrupts with the same type will be missed.
+
+To eliminate that problem, the processing of interrupts is split into two parts or
+halves:
++ Top halves.
++ Bot halves.
+
+7) Top halves and Botton halves
+The interrupt handler is the top half. The top half will run immediately upon 
+receipt of the interrupt and perform only the work that is time-critical, such 
+as acknowledging receipt of the interrupt or resetting the hardware.
+
+The bottom half is used to process data, letting the top half to deal with new 
+incoming interrupts. Interrupt are enable when a bottom half runs. 
+
+IF the interrupt handler function could process and acknowledge interrupts within 
+a few microseconds consistently, the absolutely there is no need for top half/bottom 
+half delegation.
+
+8) Functions Related to Interrupt
+
+request_irq() : Register an IRQ.
+
+free_irq() : Release an IRQ register.
+
+enable_irq() : Re-enable interrupt disabled by disable_irq or disable_irq_nosync
+
+disable_irq() : Disable an IRQ from issuing a interrupt.
+
+disable_irq_nosync() : Disable an IRQ from issuing an interrupt, but wait ultil 
+there is an interrupt handler being executed.
+
+in_irq() : returns true when interrupt handler.
+
+in_interrupt() : return true when in interrupt handler or bottom half.

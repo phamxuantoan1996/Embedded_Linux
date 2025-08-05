@@ -213,11 +213,15 @@ static int __init kernel_module_extend_init(void)
 	if(request_irq(irq_number, gpio_irq_handler,IRQF_TRIGGER_RISING, "gpio_irq_31", NULL))
 	{
 		pr_err("my_device: cannot register IRQ\n");
+		goto irq;
 	}
 
         pr_info("Kernel Module Inserted Successfully...\n");
         return 0;
- 
+
+irq:
+	free_irq(irq_number,NULL);
+
 r_device:
         class_destroy(dev_class);
 
