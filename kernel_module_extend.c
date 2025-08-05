@@ -1,7 +1,7 @@
 /******************************************************************************
-*  \file       driver.c
+*  \file       kernel_module_extend.c
 *
-*  \details    Creating Kernel Module with File Operations
+*  \details    GPIO Interrupt
 *
 *  \author     PhamToan
 *
@@ -17,16 +17,35 @@
 
 #include <linux/err.h>
 
-#include <linux/wait.h> //waitqueue
-#include <linux/kthread.h>
+#include <linux/gpio.h>
+#include <linux/interrupt.h>
 
-uint32_t read_count = 0;
-static struct task_struct *wait_thread;
+#include <linux/io.h> /*remap, readl, writel function*/
+#include <linux/uaccess.h>
+#include <linux/slab.h>
 
-wait_queue_head_t wait_queue_etx;
-int wait_queue_flag = 0;
+/*define address register of GPIO0*/
+#define GPIO0_BASE_ADDR     0x44E07000
+#define GPIO_OE_OFFSET      0x134
+#define GPIO_DATAOUT_OFFSET 0x13C
+#define GPIO_SETDATAOUT     0x194
+#define GPIO_CLEARDATAOUT   0x190
+#define GPIO_DATAIN	    0x138
 
-/*create device file*/ 
+#define GPIO0_SIZE          0x1000
+#define GPIO_PIN_OUT            30
+#define GPIO_PIN_IN 		31
+
+#define GPIO_RISINGDETECT   0x148
+#define GPIO_FALLINGDETECT  0x14C
+#define GPIO_IRQSTATUS_SET_0 0x34
+#define GPIO_IRQSTATUS_0     0x2C
+
+static void __iomem *gpio0_base;
+uint8_t led_state = 0;
+uint8_t *kernel_buffer;
+
+/*create device file*/
 dev_t dev = 0;
 static struct class *dev_class;
 static struct cdev etx_cdev;
@@ -47,26 +66,25 @@ static struct file_operations fops =
 	.release	= etx_release,
 };
 
-
 /*
-** Thread function
+*IRQ GPIO Handler
 */
-static int  wait_function(void *unused)
+static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
 {
-	while(1)
+	// Clear interrupt
+	writel(1 << GPIO_PIN_IN, gpio0_base + GPIO_IRQSTATUS_0);
+	printk(KERN_INFO "GPIO interrupt occurred\n");
+	if(led_state == 0)
 	{
-		pr_info("Waiting for Event...\n");
-		wait_event_interruptible(wait_queue_etx,wait_queue_flag != 0);
-		if(wait_queue_flag == 2)
-		{
-			pr_info("Event came from Exit function\n");
-			return 0;
-		}
-		pr_info("Event came from Read Funtion - %d\n",read_count);
-		read_count++;
-		wait_queue_flag = 0;
+		led_state = 1;
+		writel(1 << GPIO_PIN_OUT, gpio0_base + GPIO_SETDATAOUT);
 	}
-	return 0;
+	else
+	{
+		writel(1 << GPIO_PIN_OUT, gpio0_base + GPIO_CLEARDATAOUT);
+		led_state = 0;
+	}
+    	return IRQ_HANDLED;
 }
 
 
@@ -92,8 +110,6 @@ static int etx_release(struct inode *inode, struct file *file)
 static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
 {
         pr_info("Driver Read Function Called...!!!\n");
-	wait_queue_flag = 1;
-	wake_up_interruptible(&wait_queue_etx);
         return 0;
 }
 /*
@@ -101,7 +117,43 @@ static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t 
 */
 static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
 {
+	uint32_t numOfByte = 0;
         pr_info("Driver Write Function Called...!!!\n");
+	if((kernel_buffer = kmalloc(1024,GFP_KERNEL)) == 0)
+	{
+		pr_err("Cannot allocate memory in kernel.\n");
+		return -EFAULT;
+	}
+	numOfByte = copy_from_user(kernel_buffer,buf,len);
+	if(numOfByte == 0)
+	{
+		int ret,led_val;
+		kernel_buffer[len - 1] = 0;
+		ret = kstrtoint(kernel_buffer,10,&led_val);
+		if(ret == 0)
+		{
+			pr_info("led value : %d\n",led_val);
+			if(led_val == 0)
+			{
+				writel(1 << GPIO_PIN_OUT, gpio0_base + GPIO_CLEARDATAOUT);
+				led_state = 0;
+			}
+			else
+			{
+				if(led_val == 1)
+				{
+					led_state = 1;
+					writel(1 << GPIO_PIN_OUT, gpio0_base + GPIO_SETDATAOUT);
+				}
+			}
+		}
+	}
+	else
+	{
+		kfree(kernel_buffer);
+		return -EFAULT;
+	}
+	kfree(kernel_buffer);
         return len;
 }
 
@@ -111,6 +163,8 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
 */
 static int __init kernel_module_extend_init(void)
 {
+	uint32_t reg_config;
+	int irq_number;
         /*Allocating Major number*/
         if((alloc_chrdev_region(&dev, 0, 1, "etx_dev")) <0){
                 pr_err("Cannot allocate major number for device.\n");
@@ -140,22 +194,26 @@ static int __init kernel_module_extend_init(void)
             goto r_device;
         }
 
-
-	//initialize waitqueue
-	init_waitqueue_head(&wait_queue_etx);
-
-	//creat the kernel thread with name 'mythread'
-	wait_thread = kthread_create(wait_function,NULL,"WaitThread");
-	if(wait_thread)
+	/*Config GPIO_30 as a output*/
+	gpio0_base = ioremap(GPIO0_BASE_ADDR, GPIO0_SIZE);
+	if(!gpio0_base)
 	{
-		pr_info("Thread created successfully\n");
-		wake_up_process(wait_thread);
+		pr_err("Failed to map GPIO0\n");
+		return -ENOMEM;
 	}
-	else
-	{
-		pr_info("Thread creation failed\n");
-	}
+	reg_config = readl(gpio0_base + GPIO_OE_OFFSET);
+	reg_config &= ~(1 << GPIO_PIN_OUT);
+	writel(reg_config,gpio0_base + GPIO_OE_OFFSET);
+	/*Config GPIO_31 as a interrupt*/
+	// Enable rising edge
+	writel(readl(gpio0_base + GPIO_RISINGDETECT) | (1 << GPIO_PIN_IN),gpio0_base + GPIO_RISINGDETECT);
+	writel(readl(gpio0_base + GPIO_IRQSTATUS_SET_0) | (1 << GPIO_PIN_IN),gpio0_base + GPIO_IRQSTATUS_SET_0);
+	irq_number = gpio_to_irq(31);  // 49 = GPIO0_31
 
+	if(request_irq(irq_number, gpio_irq_handler,IRQF_TRIGGER_RISING, "gpio_irq_31", NULL))
+	{
+		pr_err("my_device: cannot register IRQ\n");
+	}
 
         pr_info("Kernel Module Inserted Successfully...\n");
         return 0;
@@ -173,9 +231,9 @@ r_class:
 */
 static void __exit kernel_module_extend_exit(void)
 {
-	//wake up thread
-	wait_queue_flag = 2;
-	wake_up_interruptible(&wait_queue_etx);
+	int irq_number = gpio_to_irq(31);
+	free_irq(irq_number, NULL);
+	iounmap(gpio0_base);
 
         device_destroy(dev_class,dev);
         class_destroy(dev_class);
@@ -189,7 +247,7 @@ module_exit(kernel_module_extend_exit);
  
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pham Xuan Toan");
-MODULE_DESCRIPTION("Kernel Module with File Operations");
+MODULE_DESCRIPTION("Kernel Module GPIO Interrupt");
 MODULE_VERSION("1.2");
 
 

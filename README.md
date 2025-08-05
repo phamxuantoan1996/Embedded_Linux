@@ -1,127 +1,86 @@
-#Waitqueue in Linux
+#Interrupt Linux
 
-1) Introduction
+1) Polling vs Interrupt
 
-When you write a Linux Driver Module or Kernel Program, some processes 
-should wait or sleep for some event. There are several ways of handling 
-sleeping and waking up in Linux, each suited to differnts need. 
+In polling the CPU keeps on checking all the hardwares of the availablity of 
+any request.
 
-Waitqueue is also one of the method to handle that case.
+In interrupt the CPU take care of the hardware only when the hardware requests 
+for some service.
 
-Whenever a process must wait for an event (such as the arrival of data
- or termination of a process), it should go to sleep. Sleeping causes 
-the process to suspend excution, freeing the processor for uses.
+An interrupt is produced by electronic signal from hardware devices and 
+directed into input pins on an interrupt controller.
 
-After some time, the process will be woken up and will continue with 
-its job when the event which are waiting for has arrived.
+These are process that will be done by the kernel:
++ Upon receiving a interrupt, the interrupt controller send a signal to 
+processor. 
 
-Waitqueue is the list of processes waiting for an event.
++ The processor detects this signal and interrupts its current execution to 
+handle the interrupt.
 
-A wait queue is used to wait for someone to wake up when a certain 
-condition is true.
++ The process can the notify the OS that an interrupt has occurred, and the OS 
+can handle the interrupt appropriately.
 
-Waitqueue must be used carefully to ensure there is no race condition.
+Different devices are associated with different interrupts using a 
+unique value associated with each interrupt. This enables the OS to 
+differentiate between interrupts and to know which hardware device 
+caused such an interrupt. In turn, the OS can service each interrupt 
+with its corresponding.
 
-There are 3 important step in Waitqueue:
+Interrupt handling is amongst the most sensitive tasks performed by the 
+kernel and it must satisfy the following:
++ Hardware devices generate interrupts asynchronously. That mean 
+interrupts can come anytime.
 
-+ Initializing Waitqueue
++ Because interrupts can come anytime, the kernel might be handling one 
+of them while another one occurs.
 
-+ Queuing (Put the task to sleep util the event comes)
++ Some critial regions exist inside the kernel code where interrupts 
+must be disable. Such critical regions must be limited as much as 
+possible.
 
-+ Waking up Queued Task
+2) Interrupts and Exceptions
 
+3) Interrupts
 
-2) Initializing Waitqueue
+Maskable : All Interrupt Requests (IRQs) issued by I/O devices give rise 
+to maskable interrupts. A maskable interrupt can be in two states : 
+masked and unmasked; a masked interrupt is ignored by the control unit 
+as long as remains masked.
 
-Include header file : #include <linux/wait.h>
+Non-maskable : Only a few critical events (such as hardware failures) 
+give rise to non-maskable interrupts. Non-maskable interrupts are always 
+recognized by the CPU.
 
-There are two ways to initialize the waitqueue:
-+ Static method.
+4) Exceptions
 
-DECLARE_WAIT_QUEUE_HEAD(wq);
+5) Interrupt Handler
 
-+ Dynamic method.
+An interrupt handler or interrupt service routine (ISR) is the function 
+that the kernel runs in response to a specific interrupt:
++ Each device that generates interrupts has an associated interrupt 
+handler.
 
-wait_queue_head_t wq;
-init_waitqueue_head (&wq);
++ The interrupt handler for a device is part of the device's driver.
 
-3) Queuing
+What differentiates interrupt handlers from other kernel functions is 
+that kernel invokes them in response to interrupts and that they run 
+in a special context called interrupt context. 
 
-Once the wait queue is declared are initialized, a process may use it 
-to go to sleep. There are several macros are available for different 
-use.
+Because an interrupt can occur at any time, an interrupt handler can 
+be executed at any time. It is imperative that the handler runs quickly, 
+to resume the execution of the interrupt code as soon as possible. It is 
+important that :
 
++ To the hardware : the OS services the interrupt without delay. 
 
-+ wait_event(wq,condition)
++ To the rest of the system : the interrupt handler executes in as short 
+a period as possible.
 
-The process is put to sleep (TASK_UNINTERRUPTIBLE) until the 
-condition evaluates to true. The condition is checked each time 
-waitqueue wq is woken up.
-
-+ wait_event_timeout(wq,condition,timeout)
-
-The process is put to sleep (TASK_UNINTERRUPTIBLE) until the condition 
-evaluates to true or timeout elapses. The condition is checked each 
-time the waitqueue is woken up.
-
-It returns 0 if the conditions evaluated to false after the timeout 
-elapses, 1 if the condition evaluated to true after the timeout elapses
-, or the remaining jiffies (at least 1) if condition evaluated to true 
-before the timeout elapsed.
-
-
-+ wait_event_cmd(wq,condition,cmd1,cmd2)
-
-
-+ wait_event_interruptible(wq,condition)
-
-The process is put to sleep (TASK_INTERRUPTIBLE) until the condition 
-evaluated to true or a signal is received. 
-
-The condition is checked each time the waitqueue wq is woken up.
-
-The function will return -ERESTARTSYS if it was interrupted by a 
-signal and 0 if condition evaluate to true. 
-
-+ wait_event_interruptible_timeout(wq,condition,timeout)
-
-The process is put to sleep (TASK_INTERRUPTIBLE) until the condition 
-evaluated to true or a signal is received or timeout elaped. The 
-condition is checked each time woken up.
-
-It returns, 0 if the condition evaluated to false after timeout 
-elapsed, 1 if the condition evaluated to true after timeout elapsed, 
-the remaining jiffies (at least 1) the condition evaluated to true 
-before the timeout elapsed, or -ERESTARTSYS if it was interrupt by a 
-signal.  
-
-+ wait_event_killable(wq,condition)
-
-Sleep until a condition gets true.
-
-The process is put to sleep (TASK_KILLABLE) until the condition 
-evaluates to true or a signal is received. The condition is checked 
-each time the waitqueue wq woken up.
-
-The function will return -ERESTARTSYS if it was interrupted by a 
-signal and 0 if condition evaluated to true.
-
-4) Waking up Queued Task.
-
-+ wake_up(&wp)
-
-wakes up only one process from the wait queue which is in 
-non-interruptible sleep. 
-
-+ wake_up_all(&wp);
-
-wakes up all the processes on the wait queue.
-
-+ wake_up_interruptible(&wp)
-
-wakes up only one process from the wait queue that is in 
-interruptible sleep
-
-4) wake_up_sync(&wp) and wake_up_interruptible_sync(&wp)
+An interrupt handler's job is to acknowledge the interrupt's receipt 
+to the hardware. However, interrupt handlers can often have a large 
+amount of work to perform.
 
 
+6) Process Context and Interrupt Context
+ 
