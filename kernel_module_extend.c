@@ -1,13 +1,3 @@
-/******************************************************************************
-*  \file       driver.c
-*
-*  \details    Creating Kernel Module with File Operations
-*
-*  \author     PhamToan
-*
-*******************************************************************************/
-#include <linux/kernel.h>
-#include <linux/init.h>
 #include <linux/module.h>
 
 #include <linux/kdev_t.h>
@@ -15,20 +5,33 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 
-#include <linux/slab.h> /*kmalloc and kfree*/
-#include <linux/uaccess.h> /*copy_to/from_user*/
+
+#include <linux/of_address.h>
+#include <linux/platform_device.h>
+#include <linux/of.h>
+
+#include <linux/io.h>
 
 #include <linux/err.h>
 
-#define mem_size 1024
+#include <linux/delay.h>
 
-/*create device file*/ 
+#define GPIO_OE_OFFSET      0x134
+#define GPIO_DATAOUT_OFFSET 0x13C
+#define GPIO_SETDATAOUT     0x194
+#define GPIO_CLEARDATAOUT   0x190
+#define GPIO_DATAIN	    0x138
+
+static void __iomem *gpio0_base;
+u32 pin;
+u32 base_address_gpio;
+u32 size_gpio;
+
+
+/*create device file*/
 dev_t dev = 0;
 static struct class *dev_class;
 static struct cdev etx_cdev;
-
-/*pointer buffer data*/
-uint8_t *kernel_buffer;
 
 /*function prototypes of file operations*/
 static int      etx_open(struct inode *inode, struct file *file);
@@ -67,61 +70,35 @@ static int etx_release(struct inode *inode, struct file *file)
 */
 static ssize_t etx_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
 {
-        size_t ret;
-	size_t byte_to_copy;
-	//
-    	size_t len_data_kernel_buffer = strlen(kernel_buffer) + 1;
-    	if (*off >= len_data_kernel_buffer)
-    	{
-        	return 0; //end of file
-    	}
-    	byte_to_copy = len;
-    	if(byte_to_copy > len_data_kernel_buffer)
-    	{
-        	byte_to_copy = len_data_kernel_buffer;
-    	}
-
-    	//Copy the data from the kernel space to the user-space
-    	ret = copy_to_user(buf, kernel_buffer + *off, byte_to_copy);
-
-    	if(ret == 0)
-    	{
-        	*off += byte_to_copy;
-        	// pr_info("Number of byte is read : %ld.\n",byte_to_copy);
-        	return byte_to_copy;
-    	}
-    	else
-    	{
-        	// pr_info("Fail to copy %ld bytes to user space.\n",ret);
-        	return -EFAULT;
-    	}
+        pr_info("Driver Read Function Called...!!!\n");
+        return 0;
 }
 /*
 ** This function will be called when we write the Device file
 */
 static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
 {
-        //Copy the data to kernel space from the user-space
-        uint32_t numOfByte = 0;
-        numOfByte = copy_from_user(kernel_buffer, buf, len);
-        if(numOfByte == 0)
-        {
-            pr_info("Data : %s",(char*)kernel_buffer);
-            return len;
-        }
-        else
-        {
-            return -EFAULT;
-        }
+	pr_info("Driver Write Function Called...!!!\n");
+	return 0;
 }
 
-
-/*
-** Module init function
-*/
-static int __init kernel_module_extend_init(void)
+static int led_external_driver_probe(struct platform_device *pdev)
 {
-        /*Allocating Major number*/
+	uint32_t reg_config;
+	struct resource res;
+
+	if (of_address_to_resource(pdev->dev.of_node, 0, &res) == 0)
+	{
+		base_address_gpio =  res.start;
+		size_gpio = res.end - res.start + 1;
+		pr_info("Base address : 0x%x and Size : 0x%x\n",base_address_gpio,size_gpio);
+	}
+
+	of_property_read_u32(pdev->dev.of_node, "pin", &pin);
+	pr_info( "Pin : 0x%x\n", pin);
+
+
+	/*Allocating Major number*/
         if((alloc_chrdev_region(&dev, 0, 1, "etx_dev")) <0){
                 pr_err("Cannot allocate major number for device.\n");
                 return -1;
@@ -143,23 +120,35 @@ static int __init kernel_module_extend_init(void)
             pr_err("Cannot create the struct class for device.\n");
             goto r_class;
         }
- 
+
         /*Creating device*/
         if(IS_ERR(device_create(dev_class,NULL,dev,NULL,"etx_device"))){
             pr_err("Cannot create the Device.\n");
             goto r_device;
         }
 
-	/*create buffer data kernel*/
-	if((kernel_buffer = kmalloc(mem_size,GFP_KERNEL)) == 0)
+	/*Config GPIO0_30 as a output*/
+	gpio0_base = ioremap(base_address_gpio, size_gpio);
+	if(!gpio0_base)
 	{
-		pr_err("Cannot allocate memory in kernel.\n");
-		goto r_device;
+		pr_err("Failed to map GPIO0\n");
+		return -ENOMEM;
 	}
+	reg_config = readl(gpio0_base + GPIO_OE_OFFSET);
+	reg_config &= ~(1 << pin);
+	writel(reg_config,gpio0_base + GPIO_OE_OFFSET);
 
-        pr_info("Kernel Module Inserted Successfully...\n");
-        return 0;
- 
+	writel(1 << pin, gpio0_base + GPIO_SETDATAOUT);
+	mdelay(1000);
+	writel(1 << pin, gpio0_base + GPIO_CLEARDATAOUT);
+	mdelay(1000);
+	writel(1 << pin, gpio0_base + GPIO_SETDATAOUT);
+        mdelay(1000);
+        writel(1 << pin, gpio0_base + GPIO_CLEARDATAOUT);
+        mdelay(1000);
+
+	return 0;
+
 r_device:
         class_destroy(dev_class);
 
@@ -167,26 +156,37 @@ r_class:
         unregister_chrdev_region(dev,1);
         return -1;
 }
- 
-/*
-** Module exit function
-*/
-static void __exit kernel_module_extend_exit(void)
+
+static int led_external_driver_remove(struct platform_device *pdev)
 {
-	kfree(kernel_buffer);
+    	pr_info("led driver is  removed\n");
+
+	iounmap(gpio0_base);
         device_destroy(dev_class,dev);
         class_destroy(dev_class);
 	cdev_del(&etx_cdev);
         unregister_chrdev_region(dev, 1);
-        pr_info("Kernel Module Removed Successfully...\n");
+	return 0;
 }
- 
-module_init(kernel_module_extend_init);
-module_exit(kernel_module_extend_exit);
- 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Pham Xuan Toan");
-MODULE_DESCRIPTION("Kernel Module with File Operations");
-MODULE_VERSION("1.2");
 
+static const struct of_device_id my_of_match[] = {
+    { .compatible = "user,led_external" },
+    { /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, my_of_match);
+
+static struct platform_driver my_platform_driver = {
+    .probe = led_external_driver_probe,
+    .remove = led_external_driver_remove,
+    .driver = {
+        .name = "led_external_driver",
+        .of_match_table = my_of_match,
+    },
+};
+
+module_platform_driver(my_platform_driver);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Pham Toan");
+MODULE_DESCRIPTION("Example Platform Driver");
 
