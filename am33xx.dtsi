@@ -1,0 +1,6 @@
+led_external {
+                compatible = "user,led_external";
+                reg = <0x44E07000 0x1000>;
+                pin = <0x1E>;
+                status = "okay";
+};
